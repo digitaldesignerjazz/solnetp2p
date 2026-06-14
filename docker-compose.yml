@@ -1,0 +1,55 @@
+version: "3.9"
+
+services:
+  # Bootstrap node (well-known entry point)
+  bootstrap:
+    build: .
+    container_name: solnetp2p-bootstrap
+    command: [
+      "--bootstrap",
+      "--listen", "0.0.0.0:9000",
+      "-vv"
+    ]
+    ports:
+      - "9000:9000/udp"
+    networks:
+      - solnetp2p-net
+    restart: unless-stopped
+
+  # Regular peer node 1
+  node1:
+    build: .
+    container_name: solnetp2p-node1
+    depends_on:
+      - bootstrap
+    command: [
+      "--listen", "0.0.0.0:9000",
+      "--peers", "bootstrap:9000",
+      "-vv"
+    ]
+    ports:
+      - "9001:9000/udp"
+    networks:
+      - solnetp2p-net
+    restart: unless-stopped
+
+  # Regular peer node 2
+  node2:
+    build: .
+    container_name: solnetp2p-node2
+    depends_on:
+      - bootstrap
+    command: [
+      "--listen", "0.0.0.0:9000",
+      "--peers", "bootstrap:9000",
+      "-vv"
+    ]
+    ports:
+      - "9002:9000/udp"
+    networks:
+      - solnetp2p-net
+    restart: unless-stopped
+
+networks:
+  solnetp2p-net:
+    driver: bridge
