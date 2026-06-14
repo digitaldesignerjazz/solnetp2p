@@ -12,6 +12,8 @@ services:
     ]
     ports:
       - "9000:9000/udp"
+    volumes:
+      - bootstrap-data:/data
     networks:
       - solnetp2p-net
     restart: unless-stopped
@@ -29,6 +31,8 @@ services:
     ]
     ports:
       - "9001:9000/udp"
+    volumes:
+      - node1-data:/data
     networks:
       - solnetp2p-net
     restart: unless-stopped
@@ -46,9 +50,16 @@ services:
     ]
     ports:
       - "9002:9000/udp"
+    volumes:
+      - node2-data:/data
     networks:
       - solnetp2p-net
     restart: unless-stopped
+
+volumes:
+  bootstrap-data:
+  node1-data:
+  node2-data:
 
 networks:
   solnetp2p-net:
