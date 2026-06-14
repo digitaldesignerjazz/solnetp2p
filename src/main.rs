@@ -1,6 +1,7 @@
 use clap::Parser;
 use solnetp2p::core::identity::NodeIdentity;
-use tracing::{info, Level};
+use tokio::net::UdpSocket;
+use tracing::{info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
 /// SolNetP2P Node - Decentralized Peer-to-Peer Networking
@@ -15,7 +16,7 @@ struct Args {
     #[arg(short, long, default_value = "0.0.0.0:9000")]
     listen: String,
 
-    /// Peer addresses to connect to on startup (comma separated)
+    /// Peer addresses to send initial PING to (comma separated)
     #[arg(short, long, value_delimiter = ',')]
     peers: Vec<String>,
 
@@ -29,7 +30,7 @@ struct Args {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
     // Initialize structured logging
@@ -43,8 +44,7 @@ async fn main() {
         .with_max_level(log_level)
         .with_target(false)
         .finish();
-    tracing::subscriber::set_global_default(subscriber)
-        .expect("Failed to set tracing subscriber");
+    tracing::subscriber::set_global_default(subscriber)?;
 
     info!("\u{1F680} Starting SolNetP2P Node v{}", env!("CARGO_PKG_VERSION"));
     info!("   Listen address: {}", args.listen);
@@ -55,25 +55,62 @@ async fn main() {
         info!("   Mode: Regular peer node");
     }
 
-    // === Load or create cryptographic identity ===
+    // === Cryptographic Identity ===
     let identity = NodeIdentity::load_or_generate(args.generate_key);
-
     info!("   Node Public Key: {}...", &identity.public_key_hex()[..32]);
     info!("   Peer ID (short): {}", identity.short_peer_id());
 
-    if !args.peers.is_empty() {
-        info!("   Initial peers: {:?}", args.peers);
+    // === UDP Socket ===
+    let socket = UdpSocket::bind(&args.listen).await?;
+    info!("   UDP listener bound successfully");
+
+    // Send initial PING to provided peers
+    for peer in &args.peers {
+        let ping_msg = format!("PING:{}", identity.short_peer_id());
+        if let Err(e) = socket.send_to(ping_msg.as_bytes(), peer).await {
+            warn!("Failed to send PING to {}: {}", peer, e);
+        } else {
+            info!("   Sent PING to {}", peer);
+        }
     }
 
-    info!("\n[Phase 0] Cryptographic identity ready. Core networking stack initializing...");
-    info!("[Phase 0] (Future) QUIC transport, DHT discovery, mesh routing, Noise protocol.");
-    info!("\n\u{2705} SolNetP2P node started successfully (refactored with modules).");
+    info!("\n[Phase 0] UDP listener active. Waiting for messages...");
+    info!("   (Send 'PING:<peer_id>' or any message from another node)");
+    info!("\n\u{2705} SolNetP2P node is now network-capable!");
     info!("   Press Ctrl+C to stop.");
 
-    // Keep the Tokio runtime alive until Ctrl+C
-    tokio::signal::ctrl_c()
-        .await
-        .expect("Failed to listen for Ctrl+C");
+    // Simple receive loop + graceful shutdown
+    let mut buf = [0u8; 1024];
 
-    info!("Shutting down gracefully...");
+    loop {
+        tokio::select! {
+            result = socket.recv_from(&mut buf) => {
+                match result {
+                    Ok((len, src)) => {
+                        let msg = String::from_utf8_lossy(&buf[..len]).trim().to_string();
+                        info!("   Received from {}: {}", src, msg);
+
+                        // Simple ping/pong protocol
+                        if msg.starts_with("PING:") {
+                            let pong_msg = format!("PONG:{}", identity.short_peer_id());
+                            if let Err(e) = socket.send_to(pong_msg.as_bytes(), src).await {
+                                warn!("Failed to send PONG: {}", e);
+                            } else {
+                                info!("   Replied with PONG to {}", src);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!("UDP recv error: {}", e);
+                    }
+                }
+            }
+            _ = tokio::signal::ctrl_c() => {
+                info!("Shutting down gracefully...");
+                break;
+            }
+        }
+    }
+
+    Ok(())
 }
